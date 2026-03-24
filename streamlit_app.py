@@ -52,6 +52,10 @@ def retry_with_backoff(max_retries=3, initial_delay=1):
             raise last_exception
         return wrapper
     return decorator
+    return wrapper
+
+
+def get_google_creds():
     """Get Google API credentials using Service Account"""
     from google.oauth2 import service_account
     import json
