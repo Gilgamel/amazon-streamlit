@@ -5,7 +5,9 @@ from datetime import datetime
 import io
 import os
 import sys
+import time
 from dotenv import load_dotenv
+from functools import wraps
 
 # Add Amazon project to path
 amazon_path = "C:/Users/vuser/Documents/Projects/Amazon/src"
@@ -29,7 +31,27 @@ REGION_CONFIG = {
 
 
 # ==================== Auth & Google Sheets ====================
-def get_google_creds():
+def retry_with_backoff(max_retries=3, initial_delay=1):
+    """Decorator for retrying functions with exponential backoff"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            delay = initial_delay
+            last_exception = None
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries - 1:
+                        print(f"[RETRY] {func.__name__} attempt {attempt + 1} failed: {str(e)}. Retrying in {delay}s...")
+                        time.sleep(delay)
+                        delay *= 2  # Exponential backoff
+                    else:
+                        print(f"[ERROR] {func.__name__} failed after {max_retries} attempts: {str(e)}")
+            raise last_exception
+        return wrapper
+    return decorator
     """Get Google API credentials using Service Account"""
     from google.oauth2 import service_account
     import json
@@ -81,86 +103,118 @@ def get_google_creds():
     return None
 
 
-def load_gsheet_data(sheet_name, region="US"):
+def load_gsheet_data(sheet_name, region="US", max_retries=3):
     """Load Google Sheet and return SKU to cost dict. Returns None on failure, {} if empty."""
     import gspread
 
-    try:
-        creds = get_google_creds()
-        if not creds:
-            return None
-
-        client = gspread.authorize(creds)
-
-        # US and CA use the same sheet names
-        spreadsheet = client.open(sheet_name)
-        sheet = spreadsheet.sheet1
-        rows = sheet.get_all_values()
-
-        if not rows:
-            return {}
-
-        cost_mapping = {}
-        for row in rows[1:]:
-            sku = row[0].strip()
-            cost_str = row[10].strip() if len(row) > 10 else ''
-            if not sku:
-                continue
-            try:
-                cost = float(cost_str) if cost_str else 0.0
-            except ValueError:
-                cost = 0.0
-            cost_mapping[sku] = cost
-
-        return cost_mapping
-    except Exception as e:
-        import traceback
-        print(f"[ERROR] Failed to load {sheet_name}: {str(e)}")
-        print(traceback.format_exc())
+    creds = get_google_creds()
+    if not creds:
+        print(f"[ERROR] No credentials available for {sheet_name}")
         return None
 
+    for attempt in range(max_retries):
+        try:
+            client = gspread.authorize(creds)
+            print(f"[DEBUG] Loading sheet: {sheet_name} (attempt {attempt + 1})")
 
-def add_master_sku_from_gsheet(df):
-    """Add master_sku from Google Sheet"""
+            # US and CA use the same sheet names
+            spreadsheet = client.open(sheet_name)
+            sheet = spreadsheet.sheet1
+            rows = sheet.get_all_values()
+
+            if not rows:
+                print(f"[DEBUG] Sheet {sheet_name} is empty")
+                return {}
+
+            cost_mapping = {}
+            for row in rows[1:]:
+                sku = row[0].strip()
+                cost_str = row[10].strip() if len(row) > 10 else ''
+                if not sku:
+                    continue
+                try:
+                    cost = float(cost_str) if cost_str else 0.0
+                except ValueError:
+                    cost = 0.0
+                cost_mapping[sku] = cost
+
+            print(f"[DEBUG] Loaded {len(cost_mapping)} SKUs from {sheet_name}")
+            return cost_mapping
+
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] Failed to load {sheet_name} (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                delay = 2 ** attempt
+                print(f"[RETRY] Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                print(f"[ERROR] All {max_retries} attempts failed for {sheet_name}")
+                print(traceback.format_exc())
+                return None
+
+    return None
+
+
+def add_master_sku_from_gsheet(df, max_retries=3):
+    """Add master_sku from Google Sheet with retry logic"""
     import gspread
 
-    try:
-        creds = get_google_creds()
-        if not creds:
-            df['master_sku'] = df['sku']
-            return df
-        client = gspread.authorize(creds)
-        spreadsheet = client.open("SKU Manual Mapping")
-        sheet = spreadsheet.sheet1
-
-        headers = sheet.row_values(1)
-        header_clean = [h.strip().lower() for h in headers]
-
-        required_columns = ['channel_sku', 'sku_backup']
-        missing = [col for col in required_columns if col not in header_clean]
-
-        if missing:
-            st.warning(f"Missing columns in SKU mapping: {missing}")
-            df['master_sku'] = df['sku']
-            return df
-
-        records = sheet.get_all_records()
-        sku_mapping = {}
-
-        for row in records:
-            channel_sku = str(row.get('channel_sku', '')).strip()
-            sku_backup = str(row.get('sku_backup', '')).strip()
-            if channel_sku:
-                sku_mapping[channel_sku] = sku_backup
-
-        df['master_sku'] = df['sku'].map(sku_mapping)
-        df['master_sku'] = df['master_sku'].fillna(df['sku'])
-        return df
-
-    except Exception as e:
-        st.warning(f"SKU mapping failed: {str(e)}")
+    creds = get_google_creds()
+    if not creds:
+        print("[WARN] No credentials available, using original SKU")
         df['master_sku'] = df['sku']
         return df
+
+    for attempt in range(max_retries):
+        try:
+            client = gspread.authorize(creds)
+            print(f"[DEBUG] Loading SKU Manual Mapping (attempt {attempt + 1})")
+
+            spreadsheet = client.open("SKU Manual Mapping")
+            sheet = spreadsheet.sheet1
+
+            headers = sheet.row_values(1)
+            header_clean = [h.strip().lower() for h in headers]
+
+            required_columns = ['channel_sku', 'sku_backup']
+            missing = [col for col in required_columns if col not in header_clean]
+
+            if missing:
+                st.warning(f"Missing columns in SKU mapping: {missing}")
+                df['master_sku'] = df['sku']
+                return df
+
+            records = sheet.get_all_records()
+            sku_mapping = {}
+
+            for row in records:
+                channel_sku = str(row.get('channel_sku', '')).strip()
+                sku_backup = str(row.get('sku_backup', '')).strip()
+                if channel_sku:
+                    sku_mapping[channel_sku] = sku_backup
+
+            df['master_sku'] = df['sku'].map(sku_mapping)
+            df['master_sku'] = df['master_sku'].fillna(df['sku'])
+            print(f"[DEBUG] SKU mapping completed: {len(sku_mapping)} mappings loaded")
+            return df
+
+        except Exception as e:
+            import traceback
+            print(f"[ERROR] SKU mapping failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            if attempt < max_retries - 1:
+                delay = 2 ** attempt
+                print(f"[RETRY] Retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                print(f"[ERROR] All {max_retries} attempts failed for SKU mapping")
+                print(traceback.format_exc())
+                st.warning(f"SKU mapping failed after {max_retries} attempts: {str(e)}. Using original SKU.")
+                df['master_sku'] = df['sku']
+                return df
+
+    df['master_sku'] = df['sku']
+    return df
 
 
 # ==================== Data Processing ====================
