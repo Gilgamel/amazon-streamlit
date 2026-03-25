@@ -107,19 +107,21 @@ def get_google_creds():
     return None
 
 
-def load_gsheet_data(sheet_name, region="US", max_retries=3):
+def load_gsheet_data(sheet_name, region="US", max_retries=5, initial_delay=2):
     """Load Google Sheet and return SKU to cost dict. Returns None on failure, {} if empty."""
     import gspread
+    from googleapiclient.errors import HttpError
 
     creds = get_google_creds()
     if not creds:
         print(f"[ERROR] No credentials available for {sheet_name}")
         return None
 
+    delay = initial_delay
     for attempt in range(max_retries):
         try:
             client = gspread.authorize(creds)
-            print(f"[DEBUG] Loading sheet: {sheet_name} (attempt {attempt + 1})")
+            print(f"[DEBUG] Loading sheet: {sheet_name} (attempt {attempt + 1}/{max_retries})")
 
             # US and CA use the same sheet names
             spreadsheet = client.open(sheet_name)
@@ -147,11 +149,17 @@ def load_gsheet_data(sheet_name, region="US", max_retries=3):
 
         except Exception as e:
             import traceback
-            print(f"[ERROR] Failed to load {sheet_name} (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            error_msg = str(e)
+            print(f"[ERROR] Failed to load {sheet_name} (attempt {attempt + 1}/{max_retries}): {error_msg}")
+
+            # Check if it's a quota or 503 error - use longer delay
+            is_quota_error = "quota" in error_msg.lower() or "503" in error_msg or "500" in error_msg
+            current_delay = delay * 3 if is_quota_error else delay
+
             if attempt < max_retries - 1:
-                delay = 2 ** attempt
-                print(f"[RETRY] Retrying in {delay}s...")
-                time.sleep(delay)
+                print(f"[RETRY] Retrying in {current_delay}s...")
+                time.sleep(current_delay)
+                delay *= 2  # Exponential backoff
             else:
                 print(f"[ERROR] All {max_retries} attempts failed for {sheet_name}")
                 print(traceback.format_exc())
@@ -160,7 +168,7 @@ def load_gsheet_data(sheet_name, region="US", max_retries=3):
     return None
 
 
-def add_master_sku_from_gsheet(df, max_retries=3):
+def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
     """Add master_sku from Google Sheet with retry logic"""
     import gspread
 
@@ -170,10 +178,11 @@ def add_master_sku_from_gsheet(df, max_retries=3):
         df['master_sku'] = df['sku']
         return df
 
+    delay = initial_delay
     for attempt in range(max_retries):
         try:
             client = gspread.authorize(creds)
-            print(f"[DEBUG] Loading SKU Manual Mapping (attempt {attempt + 1})")
+            print(f"[DEBUG] Loading SKU Manual Mapping (attempt {attempt + 1}/{max_retries})")
 
             spreadsheet = client.open("SKU Manual Mapping")
             sheet = spreadsheet.sheet1
@@ -205,15 +214,21 @@ def add_master_sku_from_gsheet(df, max_retries=3):
 
         except Exception as e:
             import traceback
-            print(f"[ERROR] SKU mapping failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+            error_msg = str(e)
+            print(f"[ERROR] SKU mapping failed (attempt {attempt + 1}/{max_retries}): {error_msg}")
+
+            # Check if it's a quota or 503 error - use longer delay
+            is_quota_error = "quota" in error_msg.lower() or "503" in error_msg or "500" in error_msg
+            current_delay = delay * 3 if is_quota_error else delay
+
             if attempt < max_retries - 1:
-                delay = 2 ** attempt
-                print(f"[RETRY] Retrying in {delay}s...")
-                time.sleep(delay)
+                print(f"[RETRY] Retrying in {current_delay}s...")
+                time.sleep(current_delay)
+                delay *= 2
             else:
                 print(f"[ERROR] All {max_retries} attempts failed for SKU mapping")
                 print(traceback.format_exc())
-                st.warning(f"SKU mapping failed after {max_retries} attempts: {str(e)}. Using original SKU.")
+                st.warning(f"SKU mapping failed after {max_retries} attempts: {error_msg}. Using original SKU.")
                 df['master_sku'] = df['sku']
                 return df
 
