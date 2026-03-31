@@ -995,6 +995,9 @@ if uploaded_file is None:
     st.info("Please upload an Amazon report file to begin.")
     st.stop()
 
+# Store uploaded file name for download naming
+st.session_state.uploaded_file_name = uploaded_file.name
+
 # Read and preview
 df_preview = pd.read_csv(uploaded_file, delimiter='\t', nrows=5)
 st.write("File preview:")
@@ -1075,7 +1078,7 @@ if st.session_state.processing_complete and st.session_state.output_file:
     st.download_button(
         label="Download Excel Report",
         data=st.session_state.output_file,
-        file_name=f"Amazon_{region}_Report_{start_date}_{end_date}.xlsx",
+        file_name=f"{st.session_state.uploaded_file_name.rsplit('.', 1)[0]}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 else:
