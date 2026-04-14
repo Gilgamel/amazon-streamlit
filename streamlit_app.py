@@ -864,40 +864,88 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                         if merged_month is not None:
                             if region == "CA" and tax_report_mapping:
                                 merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
+                                merged_month['tax_code'] = np.where(
+                                    merged_month['tax_rate'] == '0%',
+                                    'OUT OF SCOPE',
+                                    merged_month['tax_location'].apply(calculate_tax_code)
+                                )
 
                             if not merged_month.empty and 'master_sku' in merged_month.columns:
-                                grouped = merged_month.groupby('master_sku', as_index=False).agg({
-                                    'QTY': 'sum',
-                                    'Total_amount': 'sum'
-                                }).rename(columns={'QTY': 'total QTY', 'Total_amount': 'total amount'})
+                                # CA: group by master_sku and tax_code; US: group by master_sku only
+                                if region == "CA":
+                                    grouped = merged_month.groupby(['master_sku', 'tax_code'], as_index=False).agg({
+                                        'QTY': 'sum',
+                                        'Total_amount': 'sum'
+                                    }).rename(columns={'QTY': 'total QTY', 'Total_amount': 'total amount'})
 
-                                if not grouped.empty:
-                                    grouped['product_rate'] = np.where(
-                                        grouped['total QTY'] > 0,
-                                        (grouped['total amount'] / grouped['total QTY']).round(2),
-                                        0.0
+                                    if not grouped.empty:
+                                        grouped['product_rate'] = np.where(
+                                            grouped['total QTY'] > 0,
+                                            (grouped['total amount'] / grouped['total QTY']).round(2),
+                                            0.0
+                                        )
+
+                                    grouped['product_cost'] = grouped['master_sku'].apply(
+                                        lambda sku: 0.0 if str(sku).strip().lower() == "shipping"
+                                        else landed_cost_data.get(str(sku).strip(), pdb_us_data.get(str(sku).strip(), None))
                                     )
+                                    grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
 
-                                grouped['product_cost'] = grouped['master_sku'].apply(
-                                    lambda sku: 0.0 if str(sku).strip().lower() == "shipping"
-                                    else landed_cost_data.get(str(sku).strip(), pdb_us_data.get(str(sku).strip(), None))
-                                )
-                                grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
+                                    # CA: Add shipping rows grouped by tax_code
+                                    try:
+                                        shipping_grouped = merged_month.groupby('tax_code', as_index=False).agg({
+                                            'Total_shipping': 'sum'
+                                        })
+                                        for _, row in shipping_grouped.iterrows():
+                                            tax_code = row['tax_code']
+                                            total_shipping = row['Total_shipping']
+                                            if total_shipping != 0:
+                                                shipping_row = pd.DataFrame([{
+                                                    'master_sku': 'Shipping',
+                                                    'tax_code': tax_code,
+                                                    'total QTY': 1,
+                                                    'total amount': total_shipping,
+                                                    'product_rate': total_shipping,
+                                                    'product_cost': 0,
+                                                    'total_cost': 0
+                                                }])
+                                                grouped = pd.concat([grouped, shipping_row], ignore_index=True)
+                                    except Exception as e:
+                                        print(f"[Error] Adding shipping rows failed: {str(e)}")
+                                else:
+                                    # US: group by master_sku only
+                                    grouped = merged_month.groupby('master_sku', as_index=False).agg({
+                                        'QTY': 'sum',
+                                        'Total_amount': 'sum'
+                                    }).rename(columns={'QTY': 'total QTY', 'Total_amount': 'total amount'})
 
-                                try:
-                                    sum_total_shipping = merged_month['Total_shipping'].sum()
-                                    if sum_total_shipping != 0:
-                                        new_row = pd.DataFrame([{
-                                            'master_sku': 'Shipping',
-                                            'total QTY': 1,
-                                            'total amount': sum_total_shipping,
-                                            'product_rate': sum_total_shipping,
-                                            'product_cost': 0,
-                                            'total_cost': 0
-                                        }])
-                                        grouped = pd.concat([grouped, new_row], ignore_index=True)
-                                except:
-                                    pass
+                                    if not grouped.empty:
+                                        grouped['product_rate'] = np.where(
+                                            grouped['total QTY'] > 0,
+                                            (grouped['total amount'] / grouped['total QTY']).round(2),
+                                            0.0
+                                        )
+
+                                    grouped['product_cost'] = grouped['master_sku'].apply(
+                                        lambda sku: 0.0 if str(sku).strip().lower() == "shipping"
+                                        else landed_cost_data.get(str(sku).strip(), pdb_us_data.get(str(sku).strip(), None))
+                                    )
+                                    grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
+
+                                    try:
+                                        sum_total_shipping = merged_month['Total_shipping'].sum()
+                                        if sum_total_shipping != 0:
+                                            new_row = pd.DataFrame([{
+                                                'master_sku': 'Shipping',
+                                                'total QTY': 1,
+                                                'total amount': sum_total_shipping,
+                                                'product_rate': sum_total_shipping,
+                                                'product_cost': 0,
+                                                'total_cost': 0
+                                            }])
+                                            grouped = pd.concat([grouped, new_row], ignore_index=True)
+                                    except:
+                                        pass
 
                                 order_import_df = grouped
 
@@ -928,40 +976,88 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                     if merged_all is not None:
                         if region == "CA" and tax_report_mapping:
                             merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
+                            merged_all['tax_code'] = np.where(
+                                merged_all['tax_rate'] == '0%',
+                                'OUT OF SCOPE',
+                                merged_all['tax_location'].apply(calculate_tax_code)
+                            )
 
                         if not merged_all.empty and 'master_sku' in merged_all.columns:
-                            grouped = merged_all.groupby('master_sku', as_index=False).agg({
-                                'QTY': 'sum',
-                                'Total_amount': 'sum'
-                            }).rename(columns={'QTY': 'total QTY', 'Total_amount': 'total amount'})
+                            # CA: group by master_sku and tax_code; US: group by master_sku only
+                            if region == "CA":
+                                grouped = merged_all.groupby(['master_sku', 'tax_code'], as_index=False).agg({
+                                    'QTY': 'sum',
+                                    'Total_amount': 'sum'
+                                }).rename(columns={'QTY': 'total QTY', 'Total_amount': 'total amount'})
 
-                            if not grouped.empty:
-                                grouped['product_rate'] = np.where(
-                                    grouped['total QTY'] > 0,
-                                    (grouped['total amount'] / grouped['total QTY']).round(2),
-                                    0.0
+                                if not grouped.empty:
+                                    grouped['product_rate'] = np.where(
+                                        grouped['total QTY'] > 0,
+                                        (grouped['total amount'] / grouped['total QTY']).round(2),
+                                        0.0
+                                    )
+
+                                grouped['product_cost'] = grouped['master_sku'].apply(
+                                    lambda sku: 0.0 if str(sku).strip().lower() == "shipping"
+                                    else landed_cost_data.get(str(sku).strip(), pdb_us_data.get(str(sku).strip(), None))
                                 )
+                                grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
 
-                            grouped['product_cost'] = grouped['master_sku'].apply(
-                                lambda sku: 0.0 if str(sku).strip().lower() == "shipping"
-                                else landed_cost_data.get(str(sku).strip(), pdb_us_data.get(str(sku).strip(), None))
-                            )
-                            grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
+                                # CA: Add shipping rows grouped by tax_code
+                                try:
+                                    shipping_grouped = merged_all.groupby('tax_code', as_index=False).agg({
+                                        'Total_shipping': 'sum'
+                                    })
+                                    for _, row in shipping_grouped.iterrows():
+                                        tax_code = row['tax_code']
+                                        total_shipping = row['Total_shipping']
+                                        if total_shipping != 0:
+                                            shipping_row = pd.DataFrame([{
+                                                'master_sku': 'Shipping',
+                                                'tax_code': tax_code,
+                                                'total QTY': 1,
+                                                'total amount': total_shipping,
+                                                'product_rate': total_shipping,
+                                                'product_cost': 0,
+                                                'total_cost': 0
+                                            }])
+                                            grouped = pd.concat([grouped, shipping_row], ignore_index=True)
+                                except Exception as e:
+                                    print(f"[Error] Adding shipping rows failed: {str(e)}")
+                            else:
+                                # US: group by master_sku only
+                                grouped = merged_all.groupby('master_sku', as_index=False).agg({
+                                    'QTY': 'sum',
+                                    'Total_amount': 'sum'
+                                }).rename(columns={'QTY': 'total QTY', 'Total_amount': 'total amount'})
 
-                            try:
-                                sum_total_shipping = merged_all['Total_shipping'].sum()
-                                if sum_total_shipping != 0:
-                                    new_row = pd.DataFrame([{
-                                        'master_sku': 'Shipping',
-                                        'total QTY': 1,
-                                        'total amount': sum_total_shipping,
-                                        'product_rate': sum_total_shipping,
-                                        'product_cost': 0,
-                                        'total_cost': 0
-                                    }])
-                                    grouped = pd.concat([grouped, new_row], ignore_index=True)
-                            except:
-                                pass
+                                if not grouped.empty:
+                                    grouped['product_rate'] = np.where(
+                                        grouped['total QTY'] > 0,
+                                        (grouped['total amount'] / grouped['total QTY']).round(2),
+                                        0.0
+                                    )
+
+                                grouped['product_cost'] = grouped['master_sku'].apply(
+                                    lambda sku: 0.0 if str(sku).strip().lower() == "shipping"
+                                    else landed_cost_data.get(str(sku).strip(), pdb_us_data.get(str(sku).strip(), None))
+                                )
+                                grouped['total_cost'] = grouped['product_cost'] * grouped['total QTY']
+
+                                try:
+                                    sum_total_shipping = merged_all['Total_shipping'].sum()
+                                    if sum_total_shipping != 0:
+                                        new_row = pd.DataFrame([{
+                                            'master_sku': 'Shipping',
+                                            'total QTY': 1,
+                                            'total amount': sum_total_shipping,
+                                            'product_rate': sum_total_shipping,
+                                            'product_cost': 0,
+                                            'total_cost': 0
+                                        }])
+                                        grouped = pd.concat([grouped, new_row], ignore_index=True)
+                                except:
+                                    pass
 
                             order_import_df = grouped
 
