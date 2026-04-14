@@ -265,12 +265,19 @@ def update_sku_mapping_in_gsheet(new_mappings, max_retries=5):
             spreadsheet = client.open("SKU Manual Mapping")
             sheet = spreadsheet.sheet1
 
-            # Append new mappings
-            for channel_sku, sku_backup in new_mappings.items():
+            # Get current row count to find where to append
+            rows = sheet.get_all_values()
+            next_row = len(rows) + 1
+
+            # Write new mappings: A=channel_sku, B=empty, C&D=sku_backup
+            for i, (channel_sku, sku_backup) in enumerate(new_mappings.items()):
                 # Ensure both values are strings
-                row = [str(channel_sku).strip(), str(sku_backup).strip()]
-                sheet.append_row(row, value_input_option='USER_ENTERED')
-                print(f"[DEBUG] Added mapping: {row[0]} -> {row[1]}")
+                channel_sku = str(channel_sku).strip()
+                sku_backup = str(sku_backup).strip()
+                row_num = next_row + i
+                # Write A=channel_sku, B=empty, C=sku_backup, D=sku_backup
+                sheet.update(f"A{row_num}:D{row_num}", [[channel_sku, "", sku_backup, sku_backup]])
+                print(f"[DEBUG] Added mapping at row {row_num}: A={channel_sku}, C&D={sku_backup}", flush=True)
 
             print(f"[DEBUG] Successfully added {len(new_mappings)} SKU mappings")
             return True
@@ -1059,6 +1066,8 @@ if 'file_content' not in st.session_state:
     st.session_state.file_content = None
 if 'has_file' not in st.session_state:
     st.session_state.has_file = False
+if 'reprocess_triggered' not in st.session_state:
+    st.session_state.reprocess_triggered = False
 
 # Region selector
 region = st.selectbox("Select Region", options=["US", "CA"], index=0)
@@ -1129,8 +1138,13 @@ with col2:
 if region == "CA" and tax_report_file is None:
     st.warning("CA region requires a Tax Report file.")
 
-# Process button
-if st.button("Process Data", type="primary"):
+# Process button - also triggered automatically on reprocess
+should_process = st.button("Process Data", type="primary") or st.session_state.get('reprocess_triggered', False)
+if should_process:
+    # Clear the reprocess trigger
+    if st.session_state.get('reprocess_triggered', False):
+        st.session_state.reprocess_triggered = False
+
     progress_bar = st.progress(0)
     status_text = st.empty()
 
@@ -1200,7 +1214,7 @@ if st.session_state.unmatched_skus:
     with col1:
         if st.button("Sync to Google Sheets", disabled=not edited_mappings, type="primary"):
             # Debug: show what we're about to sync
-            print(f"[DEBUG] Syncing mappings: {edited_mappings}")
+            print(f"[DEBUG] Syncing mappings: {edited_mappings}", flush=True)
             success = update_sku_mapping_in_gsheet(edited_mappings)
             if success:
                 st.session_state.sku_mapping_edits.update(edited_mappings)
@@ -1211,10 +1225,11 @@ if st.session_state.unmatched_skus:
 
     with col2:
         if st.button("Reprocess", type="secondary"):
-            # Reset processing state and clear cache to force full reprocess
+            # Force reprocessing by resetting state and triggering a rerun that will auto-process
             st.session_state.processing_complete = False
             st.session_state.output_file = None
             st.session_state.unmatched_skus = []
+            st.session_state.reprocess_triggered = True
             st.cache_data.clear()
             st.rerun()
 elif st.session_state.processing_complete:
