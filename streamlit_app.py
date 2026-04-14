@@ -208,7 +208,7 @@ def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
                     sku_mapping[channel_sku] = sku_backup
 
             df['master_sku'] = df['sku'].map(sku_mapping)
-            df['master_sku'] = df['master_sku'].fillna(df['sku'])
+            # Keep NaN for unmatched SKUs to match behavior of amazon_us_qty_order.py
             print(f"[DEBUG] SKU mapping completed: {len(sku_mapping)} mappings loaded")
             return df
 
