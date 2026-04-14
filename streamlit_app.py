@@ -267,8 +267,10 @@ def update_sku_mapping_in_gsheet(new_mappings, max_retries=5):
 
             # Append new mappings
             for channel_sku, sku_backup in new_mappings.items():
-                sheet.append_row([channel_sku, sku_backup], value_input_option='USER_ENTERED')
-                print(f"[DEBUG] Added mapping: {channel_sku} -> {sku_backup}")
+                # Ensure both values are strings
+                row = [str(channel_sku).strip(), str(sku_backup).strip()]
+                sheet.append_row(row, value_input_option='USER_ENTERED')
+                print(f"[DEBUG] Added mapping: {row[0]} -> {row[1]}")
 
             print(f"[DEBUG] Successfully added {len(new_mappings)} SKU mappings")
             return True
@@ -1185,17 +1187,20 @@ if st.session_state.unmatched_skus:
     # Display editable list for each unmatched SKU
     edited_mappings = {}
     for sku in st.session_state.unmatched_skus:
+        sku_str = str(sku).strip()  # Ensure SKU is a clean string
         correct_sku = st.text_input(
-            f"channel_sku: {sku}",
-            value=st.session_state.sku_mapping_edits.get(sku, ""),
-            key=f"sku_edit_{sku}"
+            f"channel_sku: {sku_str}",
+            value=st.session_state.sku_mapping_edits.get(sku_str, ""),
+            key=f"sku_edit_{sku_str}"
         )
         if correct_sku:
-            edited_mappings[sku] = correct_sku
+            edited_mappings[sku_str] = correct_sku.strip()
 
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Sync to Google Sheets", disabled=not edited_mappings, type="primary"):
+            # Debug: show what we're about to sync
+            print(f"[DEBUG] Syncing mappings: {edited_mappings}")
             success = update_sku_mapping_in_gsheet(edited_mappings)
             if success:
                 st.session_state.sku_mapping_edits.update(edited_mappings)
