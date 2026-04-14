@@ -1053,6 +1053,10 @@ if 'unmatched_skus' not in st.session_state:
     st.session_state.unmatched_skus = []
 if 'sku_mapping_edits' not in st.session_state:
     st.session_state.sku_mapping_edits = {}
+if 'file_content' not in st.session_state:
+    st.session_state.file_content = None
+if 'has_file' not in st.session_state:
+    st.session_state.has_file = False
 
 # Region selector
 region = st.selectbox("Select Region", options=["US", "CA"], index=0)
@@ -1065,12 +1069,23 @@ tax_report_file = None
 if region == "CA":
     tax_report_file = st.file_uploader("Upload Tax Report (CSV) - Required for CA", type=['csv'])
 
-if uploaded_file is None:
+# Check if we have stored file content from a previous rerun
+if uploaded_file is not None:
+    # Store file content in session state for persistence across reruns
+    uploaded_file.seek(0)
+    st.session_state.file_content = uploaded_file.getvalue()
+    st.session_state.uploaded_file_name = uploaded_file.name
+elif st.session_state.get('file_content') is not None and st.session_state.get('has_file'):
+    # Use stored file content on rerun
+    from io import BytesIO
+    uploaded_file = BytesIO(st.session_state.file_content)
+    uploaded_file.name = st.session_state.uploaded_file_name
+else:
     st.info("Please upload an Amazon report file to begin.")
     st.stop()
 
-# Store uploaded file name for download naming
-st.session_state.uploaded_file_name = uploaded_file.name
+# Track that we have a file
+st.session_state.has_file = True
 
 # Read and preview
 df_preview = pd.read_csv(uploaded_file, delimiter='\t', nrows=5)
@@ -1163,9 +1178,9 @@ else:
 
 # ==================== SKU Mapping Management ====================
 if st.session_state.unmatched_skus:
-    st.warning(f"发现 {len(st.session_state.unmatched_skus)} 个未匹配SKU")
+    st.warning(f"Found {len(st.session_state.unmatched_skus)} unmatched SKUs")
 
-    st.markdown("#### 填写正确的 SKU 映射")
+    st.markdown("#### Fill in Correct SKU Mapping")
 
     # Display editable list for each unmatched SKU
     edited_mappings = {}
@@ -1180,18 +1195,22 @@ if st.session_state.unmatched_skus:
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("同步到 Google Sheets", disabled=not edited_mappings, type="primary"):
+        if st.button("Sync to Google Sheets", disabled=not edited_mappings, type="primary"):
             success = update_sku_mapping_in_gsheet(edited_mappings)
             if success:
                 st.session_state.sku_mapping_edits.update(edited_mappings)
-                st.success("已同步！点击重新处理生效。")
+                st.session_state.unmatched_skus = []  # Clear so inputs disappear after sync
+                st.success("Synced! Click Reprocess to apply changes.")
             else:
-                st.error("同步失败，请重试。")
+                st.error("Sync failed, please retry.")
 
     with col2:
-        if st.button("重新处理", type="secondary"):
-            # Clear cache and reprocess
+        if st.button("Reprocess", type="secondary"):
+            # Reset processing state and clear cache to force full reprocess
+            st.session_state.processing_complete = False
+            st.session_state.output_file = None
+            st.session_state.unmatched_skus = []
             st.cache_data.clear()
             st.rerun()
 elif st.session_state.processing_complete:
-    st.success("所有 SKU 都已匹配！")
+    st.success("All SKUs are matched!")
