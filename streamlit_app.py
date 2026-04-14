@@ -524,6 +524,11 @@ def process_order_data(raw_df, region="US"):
         df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
 
         df['des-type'] = df['amount-description'] + ":" + df['amount-type']
+
+        # Special mapping for CA: ShippingTax -> Shipping:Tax
+        if region == "CA":
+            df.loc[(df['amount-description'] == 'ShippingTax') & (df['amount-type'] == 'ItemPrice'), 'des-type'] = "Shipping:Tax"
+
         pivot_df = df.pivot_table(
             index=['order-id', 'shipment-id', 'sku'],
             columns='des-type',
@@ -538,8 +543,10 @@ def process_order_data(raw_df, region="US"):
             "MarketplaceFacilitatorVAT-Principal:ItemWithheldTax",
             "LowValueGoodsTax-Principal:ItemWithheldTax",
             "Shipping:ItemPrice", "Shipping:Promotion",
+            "Shipping:Tax",
             "GiftWrap:ItemPrice", "GiftWrap:Promotion",
-            "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax"
+            "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax",
+            "MarketplaceFacilitatorTax-Shipping:ItemWithheldTax"
         ]
 
         existing_columns = pivot_df.columns.tolist()
@@ -574,9 +581,9 @@ def process_order_data(raw_df, region="US"):
 
         pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
 
-        # Build Shipping Tax including MarketplaceFacilitatorTax-Shipping
-        shipping_tax_cols = ['Shipping Tax', 'MarketplaceFacilitatorTax-Shipping:ItemWithheldTax']
-        pivot_df['Shipping Tax'] = pivot_df[[c for c in shipping_tax_cols if c in pivot_df.columns]].sum(axis=1)
+        # Build Shipping Tax: Shipping:Tax + MarketplaceFacilitatorTax-Shipping
+        pivot_df['Shipping Tax'] = pivot_df['Shipping:Tax'] + pivot_df['MarketplaceFacilitatorTax-Shipping:ItemWithheldTax']
+        pivot_df = pivot_df.drop(['Shipping:Tax'], axis=1, errors='ignore')
         pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
 
         pivot_df['tax_rate'] = np.where(
@@ -725,9 +732,8 @@ def process_refund_data(refund_raw_df, tax_report_mapping=None):
             pivot_df['tax_location'].apply(calculate_tax_code)
         )
 
-        # Build Shipping Tax including MarketplaceFacilitatorTax-Shipping
-        shipping_tax_cols = ['Shipping Tax', 'MarketplaceFacilitatorTax-Shipping:ItemWithheldTax']
-        pivot_df['Shipping Tax'] = pivot_df[[c for c in shipping_tax_cols if c in pivot_df.columns]].sum(axis=1)
+        if 'Shipping Tax' not in pivot_df.columns:
+            pivot_df['Shipping Tax'] = 0
 
         preferred_start = ['order-id', 'shipment-id', 'sku',
                    'Product Amount', 'Product Tax', 'Shipping', 'Shipping Tax',
