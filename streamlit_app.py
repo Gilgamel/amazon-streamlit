@@ -169,14 +169,15 @@ def load_gsheet_data(sheet_name, region="US", max_retries=5, initial_delay=2):
 
 
 def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
-    """Add master_sku from Google Sheet with retry logic"""
+    """Add master_sku from Google Sheet with retry logic. Returns (df, unmatched_skus)"""
     import gspread
 
     creds = get_google_creds()
     if not creds:
         print("[WARN] No credentials available, using original SKU")
         df['master_sku'] = df['sku']
-        return df
+        unmatched_skus = []
+        return df, unmatched_skus
 
     delay = initial_delay
     for attempt in range(max_retries):
@@ -196,7 +197,8 @@ def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
             if missing:
                 st.warning(f"Missing columns in SKU mapping: {missing}")
                 df['master_sku'] = df['sku']
-                return df
+                unmatched_skus = []
+                return df, unmatched_skus
 
             records = sheet.get_all_records()
             sku_mapping = {}
@@ -210,7 +212,13 @@ def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
             df['master_sku'] = df['sku'].map(sku_mapping)
             # Keep NaN for unmatched SKUs to match behavior of amazon_us_qty_order.py
             print(f"[DEBUG] SKU mapping completed: {len(sku_mapping)} mappings loaded")
-            return df
+
+            # Capture unmatched SKUs
+            unmatched_mask = df['master_sku'].isna() & df['sku'].notna()
+            unmatched_skus = df.loc[unmatched_mask, 'sku'].unique().tolist()
+            print(f"[DEBUG] Unmatched SKUs: {len(unmatched_skus)}")
+
+            return df, unmatched_skus
 
         except Exception as e:
             import traceback
@@ -230,10 +238,67 @@ def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
                 print(traceback.format_exc())
                 st.warning(f"SKU mapping failed after {max_retries} attempts: {error_msg}. Using original SKU.")
                 df['master_sku'] = df['sku']
-                return df
+                unmatched_skus = []
+                return df, unmatched_skus
 
     df['master_sku'] = df['sku']
-    return df
+    unmatched_skus = []
+    return df, unmatched_skus
+
+
+def update_sku_mapping_in_gsheet(new_mappings, max_retries=5):
+    """Add new SKU mappings to Google Sheet. new_mappings is dict {channel_sku: sku_backup}"""
+    import gspread
+    from googleapiclient.errors import HttpError
+
+    creds = get_google_creds()
+    if not creds:
+        st.error("No Google credentials available")
+        return False
+
+    delay = 2
+    for attempt in range(max_retries):
+        try:
+            client = gspread.authorize(creds)
+            print(f"[DEBUG] Updating SKU Manual Mapping (attempt {attempt + 1}/{max_retries})")
+
+            spreadsheet = client.open("SKU Manual Mapping")
+            sheet = spreadsheet.sheet1
+
+            # Append new mappings
+            for channel_sku, sku_backup in new_mappings.items():
+                sheet.append_row([channel_sku, sku_backup], value_input_option='USER_ENTERED')
+                print(f"[DEBUG] Added mapping: {channel_sku} -> {sku_backup}")
+
+            print(f"[DEBUG] Successfully added {len(new_mappings)} SKU mappings")
+            return True
+
+        except HttpError as e:
+            error_msg = str(e)
+            print(f"[ERROR] HTTP error updating SKU mapping (attempt {attempt + 1}/{max_retries}): {error_msg}")
+
+            is_quota_error = "quota" in error_msg.lower() or "503" in error_msg
+            current_delay = delay * 3 if is_quota_error else delay
+
+            if attempt < max_retries - 1:
+                print(f"[RETRY] Retrying in {current_delay}s...")
+                time.sleep(current_delay)
+                delay *= 2
+            else:
+                st.error(f"Failed to update SKU mapping after {max_retries} attempts: {error_msg}")
+                return False
+
+        except Exception as e:
+            error_msg = str(e)
+            print(f"[ERROR] Failed to update SKU mapping (attempt {attempt + 1}/{max_retries}): {error_msg}")
+            if attempt < max_retries - 1:
+                time.sleep(delay)
+                delay *= 2
+            else:
+                st.error(f"Failed to update SKU mapping after {max_retries} attempts: {error_msg}")
+                return False
+
+    return False
 
 
 # ==================== Data Processing ====================
@@ -272,7 +337,7 @@ def fill_missing_qty(merged_df, raw_source_df):
 
 
 def merge_order_qty(order_df, qty_df, raw_source_df=None):
-    """Merge Order and QTY data with master_sku"""
+    """Merge Order and QTY data with master_sku. Returns (merged_df, unmatched_skus)"""
     try:
         merge_keys = ['order-id', 'shipment-id', 'sku']
 
@@ -294,14 +359,14 @@ def merge_order_qty(order_df, qty_df, raw_source_df=None):
         if raw_source_df is not None:
             merged_df = fill_missing_qty(merged_df, raw_source_df)
 
-        merged_df = add_master_sku_from_gsheet(merged_df)
+        merged_df, unmatched_skus = add_master_sku_from_gsheet(merged_df)
 
         columns = [col for col in merged_df.columns if col != 'master_sku'] + ['master_sku']
-        return merged_df[columns]
+        return merged_df[columns], unmatched_skus
 
     except Exception as e:
         st.error(f"Merge failed: {str(e)}")
-        return None
+        return None, []
 
 
 def generate_summary(raw_df, start_date, end_date, region="US"):
@@ -718,6 +783,9 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
         raw_df = raw_source_df.copy()
         raw_df = raw_df.dropna(subset=['posted-date'])
 
+        # Track unmatched SKUs for SKU mapping
+        all_unmatched_skus = []
+
         # Process Tax Report for CA - store state_tax_data
         state_tax_data = None
         tax_report_mapping = {}
@@ -774,7 +842,8 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                     merged_month = None
                     order_import_df = None
                     if qty_df is not None and order_df is not None:
-                        merged_month = merge_order_qty(order_df, qty_df, raw_source_df)
+                        merged_month, month_unmatched = merge_order_qty(order_df, qty_df, raw_source_df)
+                        all_unmatched_skus.extend(month_unmatched)
                         if merged_month is not None:
                             if region == "CA" and tax_report_mapping:
                                 merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
@@ -836,7 +905,8 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                 merged_all = None
                 order_import_df = None
                 if qty_df is not None and order_df is not None:
-                    merged_all = merge_order_qty(order_df, qty_df, raw_source_df)
+                    merged_all, single_unmatched = merge_order_qty(order_df, qty_df, raw_source_df)
+                    all_unmatched_skus = single_unmatched
                     if merged_all is not None:
                         if region == "CA" and tax_report_mapping:
                             merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
@@ -955,13 +1025,13 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                     result['order_import_df'].to_excel(writer, sheet_name='order_import', index=False)
 
         output.seek(0)
-        return output
+        return output, all_unmatched_skus
 
     except Exception as e:
         st.error(f"Processing failed: {str(e)}")
         import traceback
         traceback.print_exc()
-        return None
+        return None, []
 
 
 # ==================== Streamlit UI ====================
@@ -979,6 +1049,10 @@ if 'date_range' not in st.session_state:
     st.session_state.date_range = None
 if 'total_amount' not in st.session_state:
     st.session_state.total_amount = None
+if 'unmatched_skus' not in st.session_state:
+    st.session_state.unmatched_skus = []
+if 'sku_mapping_edits' not in st.session_state:
+    st.session_state.sku_mapping_edits = {}
 
 # Region selector
 region = st.selectbox("Select Region", options=["US", "CA"], index=0)
@@ -1060,16 +1134,19 @@ if st.button("Process Data", type="primary"):
         status_text.text("Processing data...")
         progress_bar.progress(70)
         uploaded_file.seek(0)
-        output = process_data(uploaded_file, start_date, end_date, landed_cost_data, pdb_us_data, region, tax_report_file)
+        result = process_data(uploaded_file, start_date, end_date, landed_cost_data, pdb_us_data, region, tax_report_file)
         progress_bar.progress(100)
 
-        if output:
+        if result and result[0]:
+            output, unmatched_skus = result
             st.session_state.processing_complete = True
             st.session_state.output_file = output
+            st.session_state.unmatched_skus = unmatched_skus
             progress_bar.empty()
             status_text.empty()
             st.success("Processing complete!")
         else:
+            st.session_state.unmatched_skus = []
             progress_bar.empty()
             status_text.empty()
 
@@ -1083,3 +1160,38 @@ if st.session_state.processing_complete and st.session_state.output_file:
     )
 else:
     st.info("Please upload an Amazon report file to begin.")
+
+# ==================== SKU Mapping Management ====================
+if st.session_state.unmatched_skus:
+    st.warning(f"发现 {len(st.session_state.unmatched_skus)} 个未匹配SKU")
+
+    st.markdown("#### 填写正确的 SKU 映射")
+
+    # Display editable list for each unmatched SKU
+    edited_mappings = {}
+    for sku in st.session_state.unmatched_skus:
+        correct_sku = st.text_input(
+            f"channel_sku: {sku}",
+            value=st.session_state.sku_mapping_edits.get(sku, ""),
+            key=f"sku_edit_{sku}"
+        )
+        if correct_sku:
+            edited_mappings[sku] = correct_sku
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("同步到 Google Sheets", disabled=not edited_mappings, type="primary"):
+            success = update_sku_mapping_in_gsheet(edited_mappings)
+            if success:
+                st.session_state.sku_mapping_edits.update(edited_mappings)
+                st.success("已同步！点击重新处理生效。")
+            else:
+                st.error("同步失败，请重试。")
+
+    with col2:
+        if st.button("重新处理", type="secondary"):
+            # Clear cache and reprocess
+            st.cache_data.clear()
+            st.rerun()
+elif st.session_state.processing_complete:
+    st.success("所有 SKU 都已匹配！")
