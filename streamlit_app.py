@@ -909,6 +909,7 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                 refund_df = None
                 if region == "CA":
                     refund_df = process_refund_data(raw_df, tax_report_mapping)
+                    monthly_refund_data['single'] = refund_df
 
                 # Merge and calculate order_import
                 merged_all = None
