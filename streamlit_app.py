@@ -1101,18 +1101,18 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                     # order
                     if result['order_df'] is not None:
                         result['order_df'].to_excel(writer, sheet_name=f"{month_key}_order", index=False)
-                    # refund
-                    if result['refund_df'] is not None and not result['refund_df'].empty:
-                        result['refund_df'].to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
-                    else:
-                        # Create empty refund table with correct columns
-                        empty_refund_df = pd.DataFrame(columns=[
-                            'order-id', 'shipment-id', 'sku',
-                            'Product Amount', 'Product Tax', 'tax_rate',
-                            'Shipping', 'Shipping Tax', 'Total_shipping',
-                            'Giftwrap', 'Giftwrap Tax', 'Total_amount', 'tax_location', 'tax_code'
-                        ])
-                        empty_refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
+                    # refund (CA only)
+                    if region == "CA":
+                        if result['refund_df'] is not None and not result['refund_df'].empty:
+                            result['refund_df'].to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
+                        else:
+                            empty_refund_df = pd.DataFrame(columns=[
+                                'order-id', 'shipment-id', 'sku',
+                                'Product Amount', 'Product Tax', 'tax_rate',
+                                'Shipping', 'Shipping Tax', 'Total_shipping',
+                                'Giftwrap', 'Giftwrap Tax', 'Total_amount', 'tax_location', 'tax_code'
+                            ])
+                            empty_refund_df.to_excel(writer, sheet_name=f"{month_key}_refund", index=False)
                     # order_details
                     if result['merged_month'] is not None:
                         result['merged_month'].to_excel(writer, sheet_name=f"{month_key}_order_details", index=False)
@@ -1127,17 +1127,18 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                 # order
                 if result.get('order_df') is not None:
                     result['order_df'].to_excel(writer, sheet_name='order', index=False)
-                # refund
-                if result.get('refund_df') is not None and not result['refund_df'].empty:
-                    result['refund_df'].to_excel(writer, sheet_name='refund', index=False)
-                else:
-                    empty_refund_df = pd.DataFrame(columns=[
-                        'order-id', 'shipment-id', 'sku',
-                        'Product Amount', 'Product Tax', 'tax_rate',
-                        'Shipping', 'Shipping Tax', 'Total_shipping',
-                        'Giftwrap', 'Giftwrap Tax', 'Total_amount', 'tax_location', 'tax_code'
-                    ])
-                    empty_refund_df.to_excel(writer, sheet_name='refund', index=False)
+                # refund (CA only)
+                if region == "CA":
+                    if result.get('refund_df') is not None and not result['refund_df'].empty:
+                        result['refund_df'].to_excel(writer, sheet_name='refund', index=False)
+                    else:
+                        empty_refund_df = pd.DataFrame(columns=[
+                            'order-id', 'shipment-id', 'sku',
+                            'Product Amount', 'Product Tax', 'tax_rate',
+                            'Shipping', 'Shipping Tax', 'Total_shipping',
+                            'Giftwrap', 'Giftwrap Tax', 'Total_amount', 'tax_location', 'tax_code'
+                        ])
+                        empty_refund_df.to_excel(writer, sheet_name='refund', index=False)
                 # order_details
                 if result.get('merged_all') is not None:
                     result['merged_all'].to_excel(writer, sheet_name='order_details', index=False)
