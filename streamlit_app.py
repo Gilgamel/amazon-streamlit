@@ -525,9 +525,11 @@ def process_order_data(raw_df, region="US"):
 
         df['des-type'] = df['amount-description'] + ":" + df['amount-type']
 
-        # Special mapping for CA: ShippingTax -> Shipping:Tax
+        # Special mapping: ShippingTax/Shipping Tax -> Shipping:Tax (normalize for both CA and US)
         if region == "CA":
             df.loc[(df['amount-description'] == 'ShippingTax') & (df['amount-type'] == 'ItemPrice'), 'des-type'] = "Shipping:Tax"
+        if region == "US":
+            df.loc[(df['amount-description'] == 'Shipping Tax') & (df['amount-type'] == 'ItemPrice'), 'des-type'] = "Shipping:Tax"
 
         pivot_df = df.pivot_table(
             index=['order-id', 'shipment-id', 'sku'],
@@ -546,7 +548,8 @@ def process_order_data(raw_df, region="US"):
             "Shipping:Tax",
             "GiftWrap:ItemPrice", "GiftWrap:Promotion",
             "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax",
-            "MarketplaceFacilitatorTax-Shipping:ItemWithheldTax"
+            "MarketplaceFacilitatorTax-Shipping:ItemWithheldTax",
+            "MarketplaceFacilitatorVAT-Shipping:ItemWithheldTax"
         ]
 
         existing_columns = pivot_df.columns.tolist()
@@ -581,8 +584,12 @@ def process_order_data(raw_df, region="US"):
 
         pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
 
-        # Build Shipping Tax: Shipping:Tax + MarketplaceFacilitatorTax-Shipping
-        pivot_df['Shipping Tax'] = pivot_df['Shipping:Tax'] + pivot_df['MarketplaceFacilitatorTax-Shipping:ItemWithheldTax']
+        # Build Shipping Tax: Shipping:Tax + MarketplaceFacilitatorTax-Shipping + MarketplaceFacilitatorVAT-Shipping
+        pivot_df['Shipping Tax'] = (
+            pivot_df['Shipping:Tax']
+            + pivot_df['MarketplaceFacilitatorTax-Shipping:ItemWithheldTax']
+            + pivot_df['MarketplaceFacilitatorVAT-Shipping:ItemWithheldTax']
+        )
         pivot_df = pivot_df.drop(['Shipping:Tax'], axis=1, errors='ignore')
         pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
 
