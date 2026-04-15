@@ -525,11 +525,11 @@ def process_order_data(raw_df, region="US"):
 
         df['des-type'] = df['amount-description'] + ":" + df['amount-type']
 
-        # Special mapping: ShippingTax/Shipping Tax -> Shipping:Tax (normalize for both CA and US)
+        # Special mapping: ShippingTax -> Shipping:Tax (normalize for both CA and US)
         if region == "CA":
             df.loc[(df['amount-description'] == 'ShippingTax') & (df['amount-type'] == 'ItemPrice'), 'des-type'] = "Shipping:Tax"
         if region == "US":
-            df.loc[(df['amount-description'] == 'Shipping Tax') & (df['amount-type'] == 'ItemPrice'), 'des-type'] = "Shipping:Tax"
+            df.loc[(df['amount-description'] == 'ShippingTax') & (df['amount-type'] == 'ItemPrice'), 'des-type'] = "Shipping:Tax"
 
         pivot_df = df.pivot_table(
             index=['order-id', 'shipment-id', 'sku'],
