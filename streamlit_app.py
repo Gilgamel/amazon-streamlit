@@ -646,7 +646,7 @@ def process_refund_data(refund_raw_df, tax_report_mapping=None):
         refund_df = refund_raw_df.copy()
 
         refund_df = refund_df[
-            (refund_df['transaction-type'].str.lower().isin(['refund', 'refund_retrocharge'])) &
+            (refund_df['transaction-type'].str.lower().str.contains('refund', na=False)) &
             (refund_df['marketplace-name'] == 'Amazon.ca')
         ]
 
