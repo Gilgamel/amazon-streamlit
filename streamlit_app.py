@@ -669,6 +669,9 @@ def process_refund_data(refund_raw_df, tax_report_mapping=None):
         if 'shipment-id' in refund_df.columns and refund_df['shipment-id'].notna().any():
             index_cols.insert(1, 'shipment-id')
 
+        # Fill NaN sku with 'N/A' to prevent pivot from dropping Refund_Retrocharge rows (which have empty sku)
+        refund_df['sku'] = refund_df['sku'].fillna('N/A')
+
         pivot_df = refund_df.pivot_table(
             index=index_cols,
             columns='des-type',
