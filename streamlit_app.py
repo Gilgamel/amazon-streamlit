@@ -169,7 +169,7 @@ def load_gsheet_data(sheet_name, region="US", max_retries=5, initial_delay=2):
 
 
 def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
-    """Add master_sku from Google Sheet with retry logic. Returns (df, unmatched_skus)"""
+    """Add master_sku from Google Sheet with retry logic. Returns (df, unmatched_skus, unmatched_sku_order_ids)"""
     import gspread
 
     creds = get_google_creds()
@@ -177,7 +177,7 @@ def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
         print("[WARN] No credentials available, using original SKU")
         df['master_sku'] = df['sku']
         unmatched_skus = []
-        return df, unmatched_skus
+        return df, unmatched_skus, {}
 
     delay = initial_delay
     for attempt in range(max_retries):
@@ -198,7 +198,7 @@ def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
                 st.warning(f"Missing columns in SKU mapping: {missing}")
                 df['master_sku'] = df['sku']
                 unmatched_skus = []
-                return df, unmatched_skus
+                return df, unmatched_skus, {}
 
             records = sheet.get_all_records()
             sku_mapping = {}
@@ -213,12 +213,19 @@ def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
             # Keep NaN for unmatched SKUs to match behavior of amazon_us_qty_order.py
             print(f"[DEBUG] SKU mapping completed: {len(sku_mapping)} mappings loaded")
 
-            # Capture unmatched SKUs
+            # Capture unmatched SKUs and their associated order-ids
             unmatched_mask = df['master_sku'].isna() & df['sku'].notna()
             unmatched_skus = df.loc[unmatched_mask, 'sku'].unique().tolist()
+            unmatched_sku_order_ids = (
+                df.loc[unmatched_mask]
+                .groupby('sku')['order-id']
+                .apply(lambda x: list(set(x)))
+                .to_dict()
+            )
             print(f"[DEBUG] Unmatched SKUs: {len(unmatched_skus)}")
+            print(f"[DEBUG] Unmatched SKU order-ids: {unmatched_sku_order_ids}")
 
-            return df, unmatched_skus
+            return df, unmatched_skus, unmatched_sku_order_ids
 
         except Exception as e:
             import traceback
@@ -239,11 +246,11 @@ def add_master_sku_from_gsheet(df, max_retries=5, initial_delay=2):
                 st.warning(f"SKU mapping failed after {max_retries} attempts: {error_msg}. Using original SKU.")
                 df['master_sku'] = df['sku']
                 unmatched_skus = []
-                return df, unmatched_skus
+                return df, unmatched_skus, {}
 
     df['master_sku'] = df['sku']
     unmatched_skus = []
-    return df, unmatched_skus
+    return df, unmatched_skus, {}
 
 
 def update_sku_mapping_in_gsheet(new_mappings, max_retries=5):
@@ -346,7 +353,7 @@ def fill_missing_qty(merged_df, raw_source_df):
 
 
 def merge_order_qty(order_df, qty_df, raw_source_df=None):
-    """Merge Order and QTY data with master_sku. Returns (merged_df, unmatched_skus)"""
+    """Merge Order and QTY data with master_sku. Returns (merged_df, unmatched_skus, unmatched_sku_order_ids)"""
     try:
         merge_keys = ['order-id', 'shipment-id', 'sku']
 
@@ -368,14 +375,14 @@ def merge_order_qty(order_df, qty_df, raw_source_df=None):
         if raw_source_df is not None:
             merged_df = fill_missing_qty(merged_df, raw_source_df)
 
-        merged_df, unmatched_skus = add_master_sku_from_gsheet(merged_df)
+        merged_df, unmatched_skus, unmatched_sku_order_ids = add_master_sku_from_gsheet(merged_df)
 
         columns = [col for col in merged_df.columns if col != 'master_sku'] + ['master_sku']
-        return merged_df[columns], unmatched_skus
+        return merged_df[columns], unmatched_skus, unmatched_sku_order_ids
 
     except Exception as e:
         st.error(f"Merge failed: {str(e)}")
-        return None, []
+        return None, [], {}
 
 
 def generate_summary(raw_df, start_date, end_date, region="US"):
@@ -812,6 +819,7 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
 
         # Track unmatched SKUs for SKU mapping
         all_unmatched_skus = []
+        all_unmatched_sku_order_ids = {}
 
         # Process Tax Report for CA - store state_tax_data
         state_tax_data = None
@@ -869,8 +877,9 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                     merged_month = None
                     order_import_df = None
                     if qty_df is not None and order_df is not None:
-                        merged_month, month_unmatched = merge_order_qty(order_df, qty_df, raw_source_df)
+                        merged_month, month_unmatched, month_unmatched_order_ids = merge_order_qty(order_df, qty_df, raw_source_df)
                         all_unmatched_skus.extend(month_unmatched)
+                        all_unmatched_sku_order_ids.update(month_unmatched_order_ids)
                         if merged_month is not None:
                             if region == "CA" and tax_report_mapping:
                                 merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
@@ -981,8 +990,9 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                 merged_all = None
                 order_import_df = None
                 if qty_df is not None and order_df is not None:
-                    merged_all, single_unmatched = merge_order_qty(order_df, qty_df, raw_source_df)
+                    merged_all, single_unmatched, single_unmatched_order_ids = merge_order_qty(order_df, qty_df, raw_source_df)
                     all_unmatched_skus = single_unmatched
+                    all_unmatched_sku_order_ids = single_unmatched_order_ids
                     if merged_all is not None:
                         if region == "CA" and tax_report_mapping:
                             merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
@@ -1150,7 +1160,7 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                     result['order_import_df'].to_excel(writer, sheet_name='order_import', index=False)
 
         output.seek(0)
-        return output, all_unmatched_skus
+        return output, all_unmatched_skus, all_unmatched_sku_order_ids
 
     except Exception as e:
         st.error(f"Processing failed: {str(e)}")
@@ -1176,6 +1186,8 @@ if 'total_amount' not in st.session_state:
     st.session_state.total_amount = None
 if 'unmatched_skus' not in st.session_state:
     st.session_state.unmatched_skus = []
+if 'unmatched_sku_order_ids' not in st.session_state:
+    st.session_state.unmatched_sku_order_ids = {}
 if 'sku_mapping_edits' not in st.session_state:
     st.session_state.sku_mapping_edits = {}
 if 'file_content' not in st.session_state:
@@ -1285,15 +1297,17 @@ if should_process:
         progress_bar.progress(100)
 
         if result and result[0]:
-            output, unmatched_skus = result
+            output, unmatched_skus, unmatched_sku_order_ids = result
             st.session_state.processing_complete = True
             st.session_state.output_file = output
             st.session_state.unmatched_skus = unmatched_skus
+            st.session_state.unmatched_sku_order_ids = unmatched_sku_order_ids
             progress_bar.empty()
             status_text.empty()
             st.success("Processing complete!")
         else:
             st.session_state.unmatched_skus = []
+            st.session_state.unmatched_sku_order_ids = {}
             progress_bar.empty()
             status_text.empty()
 
@@ -1318,8 +1332,10 @@ if st.session_state.unmatched_skus:
     edited_mappings = {}
     for sku in st.session_state.unmatched_skus:
         sku_str = str(sku).strip()  # Ensure SKU is a clean string
+        order_ids = st.session_state.unmatched_sku_order_ids.get(sku_str, [])
+        order_ids_str = ", ".join(order_ids) if order_ids else "N/A"
         correct_sku = st.text_input(
-            f"channel_sku: {sku_str}",
+            f"channel_sku: {sku_str} | order-id: {order_ids_str}",
             value=st.session_state.sku_mapping_edits.get(sku_str, ""),
             key=f"sku_edit_{sku_str}"
         )
@@ -1335,6 +1351,7 @@ if st.session_state.unmatched_skus:
             if success:
                 st.session_state.sku_mapping_edits.update(edited_mappings)
                 st.session_state.unmatched_skus = []  # Clear so inputs disappear after sync
+                st.session_state.unmatched_sku_order_ids = {}
                 st.success("Synced! Click Reprocess to apply changes.")
             else:
                 st.error("Sync failed, please retry.")
@@ -1345,6 +1362,7 @@ if st.session_state.unmatched_skus:
             st.session_state.processing_complete = False
             st.session_state.output_file = None
             st.session_state.unmatched_skus = []
+            st.session_state.unmatched_sku_order_ids = {}
             st.session_state.reprocess_triggered = True
             st.cache_data.clear()
             st.rerun()
