@@ -745,7 +745,7 @@ def process_refund_data(refund_raw_df, tax_report_mapping=None):
 
         pivot_df['tax_code'] = np.where(
             pivot_df['tax_rate'] == '0%',
-            'OUT OF SCOPE',
+            'zero-rated',
             pivot_df['tax_location'].apply(calculate_tax_code)
         )
 
@@ -885,7 +885,7 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                                 merged_month['tax_location'] = merged_month['order-id'].map(tax_report_mapping).fillna('')
                                 merged_month['tax_code'] = np.where(
                                     merged_month['tax_rate'] == '0%',
-                                    'OUT OF SCOPE',
+                                    'zero-rated',
                                     merged_month['tax_location'].apply(calculate_tax_code)
                                 )
 
@@ -998,7 +998,7 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                             merged_all['tax_location'] = merged_all['order-id'].map(tax_report_mapping).fillna('')
                             merged_all['tax_code'] = np.where(
                                 merged_all['tax_rate'] == '0%',
-                                'OUT OF SCOPE',
+                                'zero-rated',
                                 merged_all['tax_location'].apply(calculate_tax_code)
                             )
 
