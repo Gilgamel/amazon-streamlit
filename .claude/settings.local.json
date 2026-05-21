@@ -4,7 +4,10 @@
       "Bash(pip install:*)",
       "Bash(python:*)",
       "Bash(curl:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(timeout 10 streamlit run:*)",
+      "Bash(streamlit run:*)",
+      "Bash(python3:*)"
     ]
   }
 }

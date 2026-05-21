@@ -1160,7 +1160,15 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
                     result['order_import_df'].to_excel(writer, sheet_name='order_import', index=False)
 
         output.seek(0)
-        return output, all_unmatched_skus, all_unmatched_sku_order_ids
+        # Deduplicate SKUs while preserving order (first occurrence wins for order_ids)
+        seen = set()
+        unique_unmatched_skus = []
+        for sku in all_unmatched_skus:
+            sku_str = str(sku).strip()
+            if sku_str not in seen:
+                seen.add(sku_str)
+                unique_unmatched_skus.append(sku_str)
+        return output, unique_unmatched_skus, all_unmatched_sku_order_ids
 
     except Exception as e:
         st.error(f"Processing failed: {str(e)}")
