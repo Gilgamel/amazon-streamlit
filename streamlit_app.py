@@ -1249,11 +1249,17 @@ if total_amount:
     st.info(f"Total Amount: ${total_amount:,.2f}")
 
 # Get date range from file
-# US uses %Y-%m-%d, CA uses %d.%m.%Y
-date_format = '%Y-%m-%d' if region == "US" else '%d.%m.%Y'
+# US uses %Y-%m-%d, CA may use %d.%m.%Y or ISO format (2026-04-24T02:09:37+00:00)
 uploaded_file.seek(0)
 df_dates = pd.read_csv(uploaded_file, delimiter='\t', usecols=['posted-date'], dtype={'posted-date': 'string'})
-dates = pd.to_datetime(df_dates['posted-date'], format=date_format, errors='coerce').dropna()
+
+if region == "CA":
+    # CA region: try %d.%m.%Y first, then fall back to ISO format with timezone
+    dates = pd.to_datetime(df_dates['posted-date'], format='%d.%m.%Y', errors='coerce').dropna()
+    if dates.empty:
+        dates = pd.to_datetime(df_dates['posted-date'], format='ISO8601', errors='coerce').dropna()
+else:
+    dates = pd.to_datetime(df_dates['posted-date'], format='%Y-%m-%d', errors='coerce').dropna()
 
 if dates.empty:
     st.error("No valid date data found in file.")
