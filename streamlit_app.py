@@ -398,8 +398,14 @@ def generate_summary(raw_df, start_date, end_date, region="US"):
             return None
 
         raw_df = raw_df.copy()
-        date_format = '%Y-%m-%d' if region == "US" else '%d.%m.%Y'
-        raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format=date_format, errors='coerce')
+        if region == "CA":
+            # CA may have mixed date formats: %d.%m.%Y or ISO8601
+            raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format='%d.%m.%Y', errors='coerce')
+            missing_dates = raw_df['posted-date'].isna()
+            if missing_dates.any():
+                raw_df.loc[missing_dates, 'posted-date'] = pd.to_datetime(raw_df.loc[missing_dates, 'posted-date'], format='ISO8601', errors='coerce')
+        else:
+            raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format='%Y-%m-%d', errors='coerce')
         raw_df = raw_df.dropna(subset=['posted-date'])
 
         mask = (raw_df['posted-date'] >= start_date) & (raw_df['posted-date'] <= end_date)
@@ -466,8 +472,14 @@ def process_qty_data(input_data, start_date, end_date, region="US"):
         else:
             df = input_data.copy()
 
-        date_format = '%Y-%m-%d' if region == "US" else '%d.%m.%Y'
-        df['posted-date'] = pd.to_datetime(df['posted-date'], format=date_format, errors='coerce')
+        if region == "CA":
+            # CA may have mixed date formats: %d.%m.%Y or ISO8601
+            df['posted-date'] = pd.to_datetime(df['posted-date'], format='%d.%m.%Y', errors='coerce')
+            missing_dates = df['posted-date'].isna()
+            if missing_dates.any():
+                df.loc[missing_dates, 'posted-date'] = pd.to_datetime(df.loc[missing_dates, 'posted-date'], format='ISO8601', errors='coerce')
+        else:
+            df['posted-date'] = pd.to_datetime(df['posted-date'], format='%Y-%m-%d', errors='coerce')
         df = df.dropna(subset=['posted-date'])
 
         mask = (df['posted-date'] >= start_date) & (df['posted-date'] <= end_date)
@@ -811,8 +823,15 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
         end_date = pd.to_datetime(end_date)
 
         raw_source_df = pd.read_csv(file, delimiter='\t').iloc[1:]
-        date_format = '%Y-%m-%d' if region == "US" else '%d.%m.%Y'
-        raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format=date_format, errors='coerce')
+
+        # Parse dates: US uses %Y-%m-%d, CA may use %d.%m.%Y or ISO8601
+        if region == "CA":
+            raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%d.%m.%Y', errors='coerce')
+            missing_dates = raw_source_df['posted-date'].isna()
+            if missing_dates.any():
+                raw_source_df.loc[missing_dates, 'posted-date'] = pd.to_datetime(raw_source_df.loc[missing_dates, 'posted-date'], format='ISO8601', errors='coerce')
+        else:
+            raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%Y-%m-%d', errors='coerce')
 
         raw_df = raw_source_df.copy()
         raw_df = raw_df.dropna(subset=['posted-date'])
