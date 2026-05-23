@@ -399,11 +399,7 @@ def generate_summary(raw_df, start_date, end_date, region="US"):
 
         raw_df = raw_df.copy()
         if region == "CA":
-            # CA may have mixed date formats: %d.%m.%Y or ISO8601
             raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format='%d.%m.%Y', errors='coerce')
-            missing_dates = raw_df['posted-date'].isna()
-            if missing_dates.any():
-                raw_df.loc[missing_dates, 'posted-date'] = pd.to_datetime(raw_df.loc[missing_dates, 'posted-date'], format='ISO8601', errors='coerce')
         else:
             raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format='%Y-%m-%d', errors='coerce')
         raw_df = raw_df.dropna(subset=['posted-date'])
@@ -473,13 +469,10 @@ def process_qty_data(input_data, start_date, end_date, region="US"):
             df = input_data.copy()
 
         if region == "CA":
-            # CA may have mixed date formats: %d.%m.%Y or ISO8601
             df['posted-date'] = pd.to_datetime(df['posted-date'], format='%d.%m.%Y', errors='coerce')
-            missing_dates = df['posted-date'].isna()
-            if missing_dates.any():
-                df.loc[missing_dates, 'posted-date'] = pd.to_datetime(df.loc[missing_dates, 'posted-date'], format='ISO8601', errors='coerce')
         else:
             df['posted-date'] = pd.to_datetime(df['posted-date'], format='%Y-%m-%d', errors='coerce')
+
         df = df.dropna(subset=['posted-date'])
 
         mask = (df['posted-date'] >= start_date) & (df['posted-date'] <= end_date)
@@ -506,7 +499,7 @@ def process_qty_data(input_data, start_date, end_date, region="US"):
             "fulfillment-id", "posted-date", "posted-date-time",
             "order-item-code", "merchant-order-item-id",
             "merchant-adjustment-item-id", "promotion-id"
-        ])
+        ], errors='ignore')
 
         df['des-type'] = df['amount-description'] + ":" + df['amount-type']
         df = df[df['des-type'] == "Principal:ItemPrice"]
@@ -540,7 +533,7 @@ def process_order_data(raw_df, region="US"):
             'order-item-code', 'merchant-order-item-id',
             'merchant-adjustment-item-id', 'quantity-purchased', 'promotion-id'
         ]
-        df = df.drop(columns=[c for c in cols_to_drop if c in df.columns])
+        df = df.drop(columns=[c for c in cols_to_drop if c in df.columns], errors='ignore')
 
         df['des-type'] = df['amount-description'] + ":" + df['amount-type']
 
@@ -824,12 +817,9 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
 
         raw_source_df = pd.read_csv(file, delimiter='\t').iloc[1:]
 
-        # Parse dates: US uses %Y-%m-%d, CA may use %d.%m.%Y or ISO8601
+        # Parse dates: US uses %Y-%m-%d, CA uses %d.%m.%Y
         if region == "CA":
             raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%d.%m.%Y', errors='coerce')
-            missing_dates = raw_source_df['posted-date'].isna()
-            if missing_dates.any():
-                raw_source_df.loc[missing_dates, 'posted-date'] = pd.to_datetime(raw_source_df.loc[missing_dates, 'posted-date'], format='ISO8601', errors='coerce')
         else:
             raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%Y-%m-%d', errors='coerce')
 
@@ -1273,10 +1263,8 @@ uploaded_file.seek(0)
 df_dates = pd.read_csv(uploaded_file, delimiter='\t', usecols=['posted-date'], dtype={'posted-date': 'string'})
 
 if region == "CA":
-    # CA region: try %d.%m.%Y first, then fall back to ISO format with timezone
+    # CA region: use %d.%m.%Y format only
     dates = pd.to_datetime(df_dates['posted-date'], format='%d.%m.%Y', errors='coerce').dropna()
-    if dates.empty:
-        dates = pd.to_datetime(df_dates['posted-date'], format='ISO8601', errors='coerce').dropna()
 else:
     dates = pd.to_datetime(df_dates['posted-date'], format='%Y-%m-%d', errors='coerce').dropna()
 
