@@ -399,13 +399,6 @@ def generate_summary(raw_df, start_date, end_date, region="US"):
 
         raw_df = raw_df.copy()
         if region == "CA":
-            # Force string to handle both ISO8601 and %d.%m.%Y string columns
-            raw_df['posted-date'] = raw_df['posted-date'].astype(str)
-            iso_mask = raw_df['posted-date'].str.contains('T', na=False)
-            if iso_mask.any():
-                raw_df.loc[iso_mask, 'posted-date'] = pd.to_datetime(
-                    raw_df.loc[iso_mask, 'posted-date'], format='ISO8601', errors='coerce'
-                ).dt.strftime('%d.%m.%Y')
             raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format='%d.%m.%Y', errors='coerce')
         else:
             raw_df['posted-date'] = pd.to_datetime(raw_df['posted-date'], format='%Y-%m-%d', errors='coerce')
@@ -476,13 +469,6 @@ def process_qty_data(input_data, start_date, end_date, region="US"):
             df = input_data.copy()
 
         if region == "CA":
-            # Force string to handle both ISO8601 and %d.%m.%Y string columns
-            df['posted-date'] = df['posted-date'].astype(str)
-            iso_mask = df['posted-date'].str.contains('T', na=False)
-            if iso_mask.any():
-                df.loc[iso_mask, 'posted-date'] = pd.to_datetime(
-                    df.loc[iso_mask, 'posted-date'], format='ISO8601', errors='coerce'
-                ).dt.strftime('%d.%m.%Y')
             df['posted-date'] = pd.to_datetime(df['posted-date'], format='%d.%m.%Y', errors='coerce')
         else:
             df['posted-date'] = pd.to_datetime(df['posted-date'], format='%Y-%m-%d', errors='coerce')
@@ -831,15 +817,8 @@ def process_data(file, start_date, end_date, landed_cost_data, pdb_us_data, regi
 
         raw_source_df = pd.read_csv(file, delimiter='\t').iloc[1:]
 
-        # Parse dates: US uses %Y-%m-%d, CA uses %d.%m.%Y (with ISO8601 fallback)
+        # Parse dates: US uses %Y-%m-%d, CA uses %d.%m.%Y
         if region == "CA":
-            # Force string to handle both ISO8601 and %d.%m.%Y string columns
-            raw_source_df['posted-date'] = raw_source_df['posted-date'].astype(str)
-            iso_mask = raw_source_df['posted-date'].str.contains('T', na=False)
-            if iso_mask.any():
-                raw_source_df.loc[iso_mask, 'posted-date'] = pd.to_datetime(
-                    raw_source_df.loc[iso_mask, 'posted-date'], format='ISO8601', errors='coerce'
-                ).dt.strftime('%d.%m.%Y')
             raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%d.%m.%Y', errors='coerce')
         else:
             raw_source_df['posted-date'] = pd.to_datetime(raw_source_df['posted-date'], format='%Y-%m-%d', errors='coerce')
@@ -1284,15 +1263,6 @@ uploaded_file.seek(0)
 df_dates = pd.read_csv(uploaded_file, delimiter='\t', usecols=['posted-date'], dtype={'posted-date': 'string'})
 
 if region == "CA":
-    # Ensure column is string type for .str accessor
-    date_col = df_dates['posted-date'].astype(str)
-    # Step 1: ISO8601 rows -> convert to %d.%m.%Y string
-    iso_mask = date_col.str.contains('T', na=False)
-    if iso_mask.any():
-        df_dates.loc[iso_mask, 'posted-date'] = pd.to_datetime(
-            df_dates.loc[iso_mask, 'posted-date'], format='ISO8601', errors='coerce'
-        ).dt.strftime('%d.%m.%Y')
-    # Step 2: parse all with %d.%m.%Y
     dates = pd.to_datetime(df_dates['posted-date'], format='%d.%m.%Y', errors='coerce').dropna()
 else:
     dates = pd.to_datetime(df_dates['posted-date'], format='%Y-%m-%d', errors='coerce').dropna()
