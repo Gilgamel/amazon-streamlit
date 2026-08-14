@@ -561,7 +561,8 @@ def process_order_data(raw_df, region="US"):
             "GiftWrap:ItemPrice", "GiftWrap:Promotion",
             "GiftWrapTax:ItemPrice", "MarketplaceFacilitatorTax-Other:ItemWithheldTax",
             "MarketplaceFacilitatorTax-Shipping:ItemWithheldTax",
-            "MarketplaceFacilitatorVAT-Shipping:ItemWithheldTax"
+            "MarketplaceFacilitatorVAT-Shipping:ItemWithheldTax",
+            "LowValueGoodsTax-Shipping:ItemWithheldTax"
         ]
 
         existing_columns = pivot_df.columns.tolist()
@@ -596,11 +597,12 @@ def process_order_data(raw_df, region="US"):
 
         pivot_df['Total_amount'] = pivot_df[['Product Tax', 'Product Amount', 'Giftwrap', 'Giftwrap Tax']].sum(axis=1)
 
-        # Build Shipping Tax: Shipping:Tax + MarketplaceFacilitatorTax-Shipping + MarketplaceFacilitatorVAT-Shipping
+        # Build Shipping Tax from charged tax and all marketplace-withheld shipping taxes
         pivot_df['Shipping Tax'] = (
             pivot_df['Shipping:Tax']
             + pivot_df['MarketplaceFacilitatorTax-Shipping:ItemWithheldTax']
             + pivot_df['MarketplaceFacilitatorVAT-Shipping:ItemWithheldTax']
+            + pivot_df['LowValueGoodsTax-Shipping:ItemWithheldTax']
         )
         pivot_df = pivot_df.drop(['Shipping:Tax'], axis=1, errors='ignore')
         pivot_df['Total_shipping'] = pivot_df['Shipping'] + pivot_df['Shipping Tax']
